@@ -1,0 +1,11 @@
+name: fsd
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.7
+  - jupyterlab
+  - pandas
+  - pyzmq
+  - pycodestyle
+  - mypy
