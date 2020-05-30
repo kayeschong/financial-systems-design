@@ -3,40 +3,39 @@
 import zmq  # type: ignore
 import sys
 from decimal import Decimal, DecimalException
-from typing import List, Dict, Callable, Union
+from typing import List, Dict, Callable
+from inspect import signature
 
 
 # Hi prof, I'm learning type annotations so I'll use this hw as practice
 class Account:
-    """[summary]
-
-    Returns:
-        [type]: [description]
+    """Account that tracks share and cash balance of user
     """
-    # TODO: decorator to check argument counts validity for all functions
 
-    def __init__(self, share_balance: int,  # Assume discrete share quantities
+    # This server must support the following commands:
+    # - "buy <# of shares> <price per share>"
+    # - "sell <# of shares> <price per share>"
+    # - "deposit_cash <amount>"
+    # - "get_share_balance"
+    # - "get_cash_balance"
+    # - "shutdown_server"
+    # - "help"
+
+    # Each of these commands must always return a one-line string.
+    # This string must begin with "[ERROR] " if any error occurred,
+    # otherwise it must begin with "[OK] ".
+
+    # Any command other than the above must generate the return string
+    # "[ERROR] Unknown command".
+
+    def __init__(self,
+                 share_balance: int,  # Assume discrete share quantities
                  cash_balance: Decimal,
-                 min_denomination: Decimal):
-        # This server must support the following commands:
-        # - "buy <# of shares> <price per share>"
-        # - "sell <# of shares> <price per share>"
-        # - "deposit_cash <amount>"
-        # - "get_share_balance"
-        # - "get_cash_balance"
-        # - "shutdown_server"
-        # - "help"
-
-        # Each of these commands must always return a one-line string.
-        # This string must begin with "[ERROR] " if any error occurred,
-        # otherwise it must begin with "[OK] ".
-
-        # Any command other than the above must generate the return string
-        # "[ERROR] Unknown command" .
+                 precision: Decimal = Decimal('0.01')):
 
         self._share_balance: int = share_balance
         self._cash_balance: Decimal = cash_balance
-        self._min_denomination: Decimal = min_denomination
+        self._precision: Decimal = precision
         self.command_mappings: Dict[str, Callable] = {
             'buy': self.buy_shares,
             'sell': self.sell_shares,
@@ -45,20 +44,31 @@ class Account:
             'get_cash_balance': self.get_cash_balance,
             'help': self.list_help_commands,
         }
+        # external commands for help command completeness
+        # Should be implemented by socket logic
+        self.external_commands = ['shutdown_server', ]
 
     def execute(self, cmd: str, options: List[str]) -> str:
-        # TODO: arg length handler
-        command: Callable = self.command_mappings.get(
-            cmd,
-            self.unknown_command
-        )
-        try:
-            decimal_args: List[Decimal] = [Decimal(arg) for arg in options]
-        except DecimalException:
-            # TODO: Fine tune to different cases
-            return "[ERROR] Invalid options"
+        if cmd in self.command_mappings:
+            command = self.command_mappings[cmd]
 
-        return command(*decimal_args)
+            command_params = signature(command).parameters
+            if len(command_params) != len(options):
+                return f"[ERROR] Expected {len(command_params)} inputs " + \
+                       f"but got {len(options)} inputs."
+
+            # Convert to numeric inputs with desired d.p.
+            try:
+                decimal_args: List[Decimal] = [
+                    Decimal(arg).quantize(self._precision) for arg in options
+                ]
+            except DecimalException:
+                return "[ERROR] Expected numeric inputs"
+
+            return command(*decimal_args)
+
+        else:
+            return self.unknown_command()
 
     def unknown_command(self) -> str:
         return "[ERROR] Unknown command"
@@ -67,30 +77,50 @@ class Account:
         # - "buy <# of shares> <price per share>"
         #   Must perform the appropriate validations on these two quantities,
         #   then must modify share_balance and cash_balance to reflect the
-        #   purchase, and return the string "[OK] Purchased" .
+        #   purchase, and return the string "[OK] Purchased".
 
-        cash_value = int(quantity) * price
-        # TODO: sanity checks
-        self._share_balance += int(quantity)
-        self._cash_balance -= cash_value
-        return "[OK] Purchased"
+        if quantity < 0:
+            return "[ERROR] Positive quantity required"
+        if price < 0:
+            return "[ERROR] Positive price required"
+        int_quantity = int(quantity)
+        cash_value = int_quantity * price
+
+        if cash_value > self._cash_balance:
+            return "[ERROR] Not enough cash balance to purchase"
+        else:
+            self._share_balance += int_quantity
+            self._cash_balance -= cash_value
+            return "[OK] Purchased"
 
     def sell_shares(self, quantity: Decimal, price: Decimal) -> str:
         # - "sell <# of shares> <price per share>"
         #   Must perform the appropriate validations on these two quantities,
         #   then must modify share_balance and cash_balance to reflect the
         #   sale, and return the string "[OK] Sold".
-        # TODO: sanity checks
-        _ = self.buy_shares(-quantity, price)
-        return "[OK] Sold"
 
-    def deposit_cash(self, amount: Decimal) -> str:
+        if quantity < 0:
+            return "[ERROR] Positive quantity required"
+        if price < 0:
+            return "[ERROR] Positive price required"
+        int_quantity = int(quantity)
+        cash_value = int_quantity * price
+
+        if int_quantity > self._share_balance:
+            return "[ERROR] Not enough share balance to sell"
+        else:
+            self._share_balance -= int_quantity
+            self._cash_balance += cash_value
+            return "[OK] Sold"
+
+    def deposit_cash(self, cash_value: Decimal) -> str:
         # - "deposit_cash <amount>"
         #   Must perform the appropriate validations, i.e. ensure <amount>
         #   is a positive number; then must add <amount> to cash_balance, and
         #   return the string "[OK] Deposited".
-        # TODO: sanity checks
-        self._cash_balance += amount
+        if cash_value < 0:
+            return "[ERROR] Positive amount required"
+        self._cash_balance += cash_value
         return "[OK] Deposited"
 
     def get_share_balance(self) -> str:
@@ -101,8 +131,6 @@ class Account:
     def get_cash_balance(self) -> str:
         # - "get_cash_balance"
         #   Must return "[OK] " followed by the amount of cash on hand.
-
-        # TODO: round decimal to appropiate d.p.
         return f"[OK] {self._cash_balance}"
 
     def list_help_commands(self) -> str:
@@ -110,12 +138,17 @@ class Account:
         #   Must return the string "[OK] Supported commands: " followed by
         #   a comma-separated list of the above commands.
         commands = list(self.command_mappings.keys())
-        # external commands for help command completeness
-        # Should be implemented by socket logic
-        external_commands = ['shutdown_server']
-        commands.extend(external_commands)
+        commands.extend(self.external_commands)
 
         return f"[OK] Supported commands: {', '.join(commands)}"
+
+    def __repr__(self):
+        # For debugging
+        return "Account(" + \
+               f"share_balance={self._share_balance}, " + \
+               f"cash_balance={self._cash_balance}, " + \
+               f"precision={self._precision}" + \
+               ")"
 
 
 # To run the server at a non-default port, the user provides the alternate port
@@ -146,7 +179,8 @@ penny = Decimal('0.01')
 # - "shutdown_server"
 #   Must return the string "[OK] Server shutting down" and then exit.
 
-account_1 = Account(share_balance, cash_balance, penny)
+# Instance to track balances
+my_account = Account(share_balance, cash_balance, penny)
 
 while True:
     message = socket.recv()
@@ -160,7 +194,6 @@ while True:
         sys.exit(0)
     else:
         options = tokens[1:]
-        print(cmd, options)  # TODO: remove
         # The response is a function of cmd and options:
-        response = account_1.execute(cmd, options)  # YOUR CODE HERE
+        response = my_account.execute(cmd, options)  # YOUR CODE HERE
         socket.send_string(response)
