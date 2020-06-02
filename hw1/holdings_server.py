@@ -79,9 +79,9 @@ class Account:
         #   then must modify share_balance and cash_balance to reflect the
         #   purchase, and return the string "[OK] Purchased".
 
-        if quantity < 0:
+        if quantity <= 0:
             return "[ERROR] Positive quantity required"
-        if price < 0:
+        if price <= 0:
             return "[ERROR] Positive price required"
         int_quantity = int(quantity)
         cash_value = int_quantity * price
@@ -99,9 +99,9 @@ class Account:
         #   then must modify share_balance and cash_balance to reflect the
         #   sale, and return the string "[OK] Sold".
 
-        if quantity < 0:
+        if quantity <= 0:
             return "[ERROR] Positive quantity required"
-        if price < 0:
+        if price <= 0:
             return "[ERROR] Positive price required"
         int_quantity = int(quantity)
         cash_value = int_quantity * price
@@ -118,7 +118,7 @@ class Account:
         #   Must perform the appropriate validations, i.e. ensure <amount>
         #   is a positive number; then must add <amount> to cash_balance, and
         #   return the string "[OK] Deposited".
-        if cash_value < 0:
+        if cash_value <= 0:
             return "[ERROR] Positive amount required"
         self._cash_balance += cash_value
         return "[OK] Deposited"
