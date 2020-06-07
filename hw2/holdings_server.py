@@ -3,36 +3,22 @@
 import zmq  # type: ignore
 import sys
 from decimal import Decimal, DecimalException
-from typing import List, Dict, Callable
+from typing import List, Dict, Callable, Deque, Tuple
 from inspect import signature
 from collections import deque
+import threading
+import time
 
 
-# Hi prof, I'm learning type annotations so I'll use this hw as practice
 class Account:
     """Account that tracks share and cash balance of user
     """
 
-    # This server must support the following commands:
-    # - "buy <# of shares> <price per share>"
-    # - "sell <# of shares> <price per share>"
-    # - "deposit_cash <amount>"
-    # - "get_share_balance"
-    # - "get_cash_balance"
-    # - "shutdown_server"
-    # - "help"
-
-    # Each of these commands must always return a one-line string.
-    # This string must begin with "[ERROR] " if any error occurred,
-    # otherwise it must begin with "[OK] ".
-
-    # Any command other than the above must generate the return string
-    # "[ERROR] Unknown command".
-
     def __init__(self,
                  share_balance: int,  # Assume discrete share quantities
                  cash_balance: Decimal,
-                 precision: Decimal = Decimal('0.01')):
+                 precision: Decimal = Decimal('0.01'),
+                 vwap_daemon: bool = False):
 
         self._share_balance: int = share_balance
         self._cash_balance: Decimal = cash_balance
@@ -50,13 +36,14 @@ class Account:
         # Should be implemented by socket logic
         self.external_commands = ['shutdown_server', ]
 
-        # Contruct a "daemon thread" and launch it at startup. This thread
-        # Computes the buy and sell VWAP (if any) from the 2 deques
-        # prints both VWAP to console
-        # sleeps for 10 sec and repeat
-        self.purchases_history = deque()
-        self.sales_history = deque()
-        self.vwap_history = deque()
+        self.purchase_history: Deque[Tuple[int, Decimal]] = deque()
+        self.sales_history: Deque[Tuple[int, Decimal]] = deque()
+        # Keep 10 most recent vwap
+        self.vwap_history: Deque[Tuple[str, str]] = deque(maxlen=10)
+
+        self.vwap_history_lock = threading.Lock()
+        if vwap_daemon:
+            self.start_vwap_daemon()
 
     def execute(self, cmd: str, options: List[str]) -> str:
         if cmd in self.command_mappings:
@@ -84,11 +71,6 @@ class Account:
         return "[ERROR] Unknown command"
 
     def buy_shares(self, quantity: Decimal, price: Decimal) -> str:
-        # - "buy <# of shares> <price per share>"
-        #   Must perform the appropriate validations on these two quantities,
-        #   then must modify share_balance and cash_balance to reflect the
-        #   purchase, and return the string "[OK] Purchased".
-
         if quantity <= 0:
             return "[ERROR] Positive quantity required"
         if price <= 0:
@@ -101,14 +83,10 @@ class Account:
         else:
             self._share_balance += int_quantity
             self._cash_balance -= cash_value
+            self.purchase_history.append((int_quantity, price))
             return "[OK] Purchased"
 
     def sell_shares(self, quantity: Decimal, price: Decimal) -> str:
-        # - "sell <# of shares> <price per share>"
-        #   Must perform the appropriate validations on these two quantities,
-        #   then must modify share_balance and cash_balance to reflect the
-        #   sale, and return the string "[OK] Sold".
-
         if quantity <= 0:
             return "[ERROR] Positive quantity required"
         if price <= 0:
@@ -121,43 +99,61 @@ class Account:
         else:
             self._share_balance -= int_quantity
             self._cash_balance += cash_value
+            self.sales_history.append((int_quantity, price))
             return "[OK] Sold"
 
     def deposit_cash(self, cash_value: Decimal) -> str:
-        # - "deposit_cash <amount>"
-        #   Must perform the appropriate validations, i.e. ensure <amount>
-        #   is a positive number; then must add <amount> to cash_balance, and
-        #   return the string "[OK] Deposited".
         if cash_value <= 0:
             return "[ERROR] Positive amount required"
         self._cash_balance += cash_value
         return "[OK] Deposited"
 
     def get_share_balance(self) -> str:
-        # - "get_share_balance"
-        #   Must return "[OK] " followed by the number of shares on hand.
         return f"[OK] {self._share_balance}"
 
     def get_cash_balance(self) -> str:
-        # - "get_cash_balance"
-        #   Must return "[OK] " followed by the amount of cash on hand.
         return f"[OK] {self._cash_balance}"
 
     def list_help_commands(self) -> str:
-        # - "help"
-        #   Must return the string "[OK] Supported commands: " followed by
-        #   a comma-separated list of the above commands.
         commands = list(self.command_mappings.keys())
         commands.extend(self.external_commands)
 
         return f"[OK] Supported commands: {', '.join(commands)}"
 
     def get_latest_vwaps(self) -> str:
-        # TODO: Retrieves the most recent buy and sell VWAP from self.vwap_history
-        # TODO: Can remove older VWAPs, but not all
-        # TODO: On success the command should return "[OK] <latest buy VWAP><latest sell VWAP>"
-        # TODO: If either or both of these VWAPs are missing, it should return "N/A" in place of a number
-        pass
+        buy_vwap, sell_vwap = self.vwap_history[-1]
+        message = f"[OK] {buy_vwap} {sell_vwap}"
+        return message
+
+    def start_vwap_daemon(self) -> None:
+        self._vwap_daemon(10)
+
+    def _vwap_daemon(self, interval) -> None:
+        with self.vwap_history_lock:
+            if self.purchase_history:
+                purchase_vwap = str(
+                    self._calculate_vwap(self.purchase_history)
+                )
+            else:
+                purchase_vwap = 'N/A'
+
+            if self.sales_history:
+                sales_vwap = str(
+                    self._calculate_vwap(self.sales_history)
+                )
+            else:
+                sales_vwap = 'N/A'
+            self.vwap_history.append((purchase_vwap, sales_vwap))
+
+        # recursive call to itself for next timing
+        t = threading.Timer(interval, self._vwap_daemon, args=(interval,))
+        t.daemon = True
+        t.start()
+
+    def _calculate_vwap(self, history) -> Decimal:
+        cash_value = sum(q * p for q, p in history)
+        volume = sum(q for q, p in history)
+        return Decimal(cash_value / volume).quantize(self._precision)
 
     def __repr__(self):
         # For debugging
@@ -197,7 +193,7 @@ penny = Decimal('0.01')
 #   Must return the string "[OK] Server shutting down" and then exit.
 
 # Instance to track balances
-my_account = Account(share_balance, cash_balance, penny)
+my_account = Account(share_balance, cash_balance, penny, vwap_daemon=True)
 
 while True:
     message = socket.recv()
@@ -212,5 +208,5 @@ while True:
     else:
         options = tokens[1:]
         # The response is a function of cmd and options:
-        response = my_account.execute(cmd, options)  # YOUR CODE HERE
+        response = my_account.execute(cmd, options)
         socket.send_string(response)
