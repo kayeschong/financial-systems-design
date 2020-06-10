@@ -2,12 +2,12 @@
 
 import zmq  # type: ignore
 import sys
+import threading
+import time
 from decimal import Decimal, DecimalException
 from typing import List, Dict, Callable, Deque, Tuple
 from inspect import signature
 from collections import deque
-import threading
-import time
 
 
 class Account:
@@ -21,8 +21,9 @@ class Account:
                  vwap_daemon: bool = False):
 
         self._share_balance: int = share_balance
-        self._cash_balance: Decimal = cash_balance
+        self._cash_balance: Decimal = cash_balance.quantize(precision)
         self._precision: Decimal = precision
+
         self.command_mappings: Dict[str, Callable] = {
             'buy': self.buy_shares,
             'sell': self.sell_shares,
@@ -30,7 +31,6 @@ class Account:
             'get_share_balance': self.get_share_balance,
             'get_cash_balance': self.get_cash_balance,
             'help': self.list_help_commands,
-            'get_latest_vwaps': self.get_latest_vwaps,
         }
         # external commands for help command completeness
         # Should be implemented by socket logic
@@ -38,11 +38,14 @@ class Account:
 
         self.purchase_history: Deque[Tuple[int, Decimal]] = deque()
         self.sales_history: Deque[Tuple[int, Decimal]] = deque()
-        # Keep 10 most recent vwap
+
         self.vwap_history: Deque[Tuple[str, str]] = deque(maxlen=10)
 
-        self.vwap_history_lock = threading.Lock()
         if vwap_daemon:
+            self.command_mappings.update(
+                get_latest_vwaps=self.get_latest_vwaps
+            )
+            # Keep 10 most recent vwap
             self.start_vwap_daemon()
 
     def execute(self, cmd: str, options: List[str]) -> str:
@@ -126,10 +129,11 @@ class Account:
         return message
 
     def start_vwap_daemon(self) -> None:
+        self._vwap_history_lock = threading.Lock()
         self._vwap_daemon(10)
 
     def _vwap_daemon(self, interval) -> None:
-        with self.vwap_history_lock:
+        with self._vwap_history_lock:
             if self.purchase_history:
                 purchase_vwap = str(
                     self._calculate_vwap(self.purchase_history)
