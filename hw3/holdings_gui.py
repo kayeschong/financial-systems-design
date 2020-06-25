@@ -57,14 +57,14 @@ layout = [[
                 [sg.Frame('Deposit Cash', deposit_frame)],
                 [sg.Frame('Buy Shares', buy_frame)],
                 [sg.Frame('Sell Shares', sell_frame)],
-                [sg.Button('Exit', button_color=("white", "red"))],
+                [sg.Button('Close Server & Quit', button_color=("white", "darkred"))],
                 [sg.Text("VWAP placeholder", key='get_latest_vwaps', size=(80, 1), justification='center',)]
             ],
             element_justification='center'
         )]
 ]
 
-window = sg.Window('Window Title', layout, font="Helvetica 12", icon='sutd.ico')
+window = sg.Window('Holdings Manager', layout, font="Helvetica 12", icon='sutd.ico')
 
 
 port = "5890"  # Our default server port.
@@ -112,9 +112,9 @@ while True:
     event, values = window.read(timeout=100)
     # print(event, values)
 
-    if event in (sg.WIN_CLOSED, 'Exit'):
+    if event in (sg.WIN_CLOSED, 'Close Server & Quit'):
         # # Shutdown server when gui closes
-        # socket.send_string('shutdown_server')
+        socket.send_string('shutdown_server')
         # message = socket.recv().decode("utf-8")
         break
 
