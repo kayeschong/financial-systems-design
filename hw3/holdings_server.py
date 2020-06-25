@@ -1,5 +1,3 @@
-# The server code for 40.317 Homework 1.  This code is not complete.
-
 import zmq  # type: ignore
 import sys
 import threading
@@ -39,13 +37,14 @@ class Account:
         self.purchase_history: Deque[Tuple[int, Decimal]] = deque()
         self.sales_history: Deque[Tuple[int, Decimal]] = deque()
 
+        # Keep 10 most recent vwap
         self.vwap_history: Deque[Tuple[str, str]] = deque(maxlen=10)
 
         if vwap_daemon:
             self.command_mappings.update(
                 get_latest_vwaps=self.get_latest_vwaps
             )
-            # Keep 10 most recent vwap
+
             self.start_vwap_daemon()
 
     def execute(self, cmd: str, options: List[str]) -> str:
@@ -197,7 +196,10 @@ penny = Decimal('0.01')
 #   Must return the string "[OK] Server shutting down" and then exit.
 
 # Instance to track balances
-my_account = Account(share_balance, cash_balance, penny, vwap_daemon=True)
+my_account = Account(share_balance,
+                     cash_balance,
+                     precision=penny,
+                     vwap_daemon=True)
 
 while True:
     message = socket.recv()
