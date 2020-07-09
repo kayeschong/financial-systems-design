@@ -34,3 +34,5 @@ dmypy.json
 # vscode
 .vscode
 
+# video files
+*.mp4
